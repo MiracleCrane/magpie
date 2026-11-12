@@ -433,7 +433,7 @@ func (t codexSocket) turn(req *http.Request, k *codexKept, msg []byte, shape *co
 		trace.WroteRequest(httptrace.WroteRequestInfo{})
 	}
 	header := k.header.Clone()
-	body := &codexSocketBody{c: k.c, ctx: req.Context(), k: k, shape: shape}
+	body := &codexSocketBody{c: k.c, ctx: req.Context(), k: k, shape: shape, traceID: codexSocketTraceID.Add(1)}
 	for i := range codexSocketPrelude {
 		frame, err := body.frame()
 		if i == 0 && err == nil && trace != nil && trace.GotFirstResponseByte != nil {
@@ -651,16 +651,22 @@ func sseEvent(kind string, frame []byte) []byte {
 }
 
 // codexSocketBody is the socket's frames read as server-sent events.
+var codexSocketTraceID atomic.Uint64
+
 type codexSocketBody struct {
-	c       *websocket.Conn
-	ctx     context.Context
-	k       *codexKept
-	shape   *codexTurnShape // nil: the socket isn't kept after the turn
-	output  []itemSum
-	pending []byte
-	done    bool
-	err     error
-	closed  atomic.Bool
+	c           *websocket.Conn
+	ctx         context.Context
+	k           *codexKept
+	shape       *codexTurnShape // nil: the socket isn't kept after the turn
+	output      []itemSum
+	pending     []byte
+	done        bool
+	err         error
+	closed      atomic.Bool
+	traceID     uint64
+	frames      uint64
+	frameBytes  uint64
+	lastFrameAt time.Time
 }
 
 // frame is the socket's next frame, nil for one the reply leaves out.
@@ -670,6 +676,15 @@ func (b *codexSocketBody) frame() ([]byte, error) {
 	}
 	typ, data, err := b.c.Read(b.ctx)
 	if err != nil {
+		// Preserve the close status before close() cancels the context and
+		// normal closure is flattened to EOF. Never log the peer's reason,
+		// error text, frame content, headers or conversation identifiers.
+		lastFrameMS := int64(-1)
+		if !b.lastFrameAt.IsZero() {
+			lastFrameMS = time.Since(b.lastFrameAt).Milliseconds()
+		}
+		log.Printf("codex-transport: close_status=%d trace=%d frames=%d frame_bytes=%d last_frame_ms=%d context_cancelled=%t local_close=%t terminal_seen=false",
+			websocket.CloseStatus(err), b.traceID, b.frames, b.frameBytes, lastFrameMS, b.ctx.Err() != nil, b.closed.Load())
 		b.done = true
 		b.k.close()
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
@@ -680,6 +695,9 @@ func (b *codexSocketBody) frame() ([]byte, error) {
 		}
 		return nil, fmt.Errorf("codex websocket: %w", err)
 	}
+	b.frames++
+	b.frameBytes += uint64(len(data))
+	b.lastFrameAt = time.Now()
 	if typ != websocket.MessageText {
 		return nil, nil
 	}
