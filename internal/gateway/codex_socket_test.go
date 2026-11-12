@@ -1,9 +1,11 @@
 package gateway
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,7 +44,9 @@ type fakeSocketBackend struct {
 	limit int64
 	// closeWith, when set, closes the socket with that status after the
 	// frames, instead of a normal close
-	closeWith websocket.StatusCode
+	closeWith   websocket.StatusCode
+	closeReason string
+	drop        bool
 	// keep reads the socket's next turn after a reply, as the backend
 	// does, until the client closes it
 	keep bool
@@ -96,8 +100,11 @@ func (f *fakeSocketBackend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+		if f.drop {
+			return
+		}
 		if f.closeWith != 0 {
-			c.Close(f.closeWith, "")
+			c.Close(f.closeWith, f.closeReason)
 			return
 		}
 		c.Close(websocket.StatusNormalClosure, "")
@@ -311,6 +318,10 @@ func TestCodexSocketErrorIsItsStatus(t *testing.T) {
 // A socket the backend closes before the reply's end is a cut stream,
 // not a whole one.
 func TestCodexSocketClosedEarlyIsCut(t *testing.T) {
+	var diagnostics bytes.Buffer
+	writer := log.Writer()
+	log.SetOutput(&diagnostics)
+	t.Cleanup(func() { log.SetOutput(writer) })
 	socketOn(t)
 	f := &fakeSocketBackend{frames: func(socketTurn) []string {
 		return wholeReply(socketTurn{})[:5]
@@ -325,6 +336,51 @@ func TestCodexSocketClosedEarlyIsCut(t *testing.T) {
 	b, err := io.ReadAll(res.Body)
 	if !errors.Is(err, io.ErrUnexpectedEOF) || !strings.Contains(string(b), "pong") {
 		t.Fatalf("read %q, %v; want the reply so far and a cut", b, err)
+	}
+	if !strings.Contains(diagnostics.String(), "codex-transport: close_status=1000") {
+		t.Fatalf("normal close code was lost before EOF conversion: %q", diagnostics.String())
+	}
+}
+
+func TestCodexSocketCloseDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code websocket.StatusCode
+		drop bool
+		want string
+	}{
+		{"normal", websocket.StatusNormalClosure, false, "close_status=1000"},
+		{"policy", websocket.StatusPolicyViolation, false, "close_status=1008"},
+		{"no_close_frame", 0, true, "close_status=-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			socketOn(t)
+			var diagnostics bytes.Buffer
+			writer := log.Writer()
+			log.SetOutput(&diagnostics)
+			t.Cleanup(func() { log.SetOutput(writer) })
+			f := &fakeSocketBackend{closeWith: tc.code, closeReason: "PRIVATE_PEER_REASON", drop: tc.drop, frames: func(socketTurn) []string {
+				return wholeReply(socketTurn{})[:5]
+			}}
+			chatgpt(t, f.ServeHTTP)
+			res, err := New().client.Post(provider.CodexBase+"/responses", "application/json",
+				strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"PRIVATE_PROMPT"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			_, err = io.ReadAll(res.Body)
+			if err == nil {
+				t.Fatal("early close must remain a failed stream")
+			}
+			output := diagnostics.String()
+			if !strings.Contains(output, "codex-transport: "+tc.want) || !strings.Contains(output, "terminal_seen=false") {
+				t.Fatalf("missing close metadata: %q", output)
+			}
+			if strings.Contains(output, "PRIVATE_PEER_REASON") || strings.Contains(output, "PRIVATE_PROMPT") {
+				t.Fatal("diagnostics exposed peer text or prompt")
+			}
+		})
 	}
 }
 
