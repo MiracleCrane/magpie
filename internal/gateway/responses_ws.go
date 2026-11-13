@@ -376,10 +376,10 @@ func (rs *responsesSocket) writeError(ctx context.Context, status int, typ, code
 
 // socketTurnRun is what a turn in flight has said so far.
 type socketTurnRun struct {
-	mu        sync.Mutex
-	ids       []string // the response ids it gave
-	cut       bool     // its reply ended before its end
-	cancelled bool
+	mu            sync.Mutex
+	ids           []string // the response ids it gave
+	cut           bool     // its reply ended before its end
+	interruptedID string   // an explicitly accepted interrupt, not a client disconnect
 }
 
 func (t *socketTurnRun) interrupt(id string) bool {
@@ -387,7 +387,7 @@ func (t *socketTurnRun) interrupt(id string) bool {
 	defer t.mu.Unlock()
 	for _, have := range t.ids {
 		if have == id {
-			t.cancelled = true
+			t.interruptedID = id
 			return true
 		}
 	}
@@ -507,6 +507,15 @@ func (rs *responsesSocket) turn(ctx context.Context, t *socketTurnRun, frame []b
 	rs.o.via.ServeHTTP(out, req)
 	out.finish()
 	if ctx.Err() != nil {
+		t.mu.Lock()
+		interruptedID := t.interruptedID
+		t.mu.Unlock()
+		if interruptedID != "" {
+			// The interrupt acknowledgement sends an empty output. Keep only
+			// the input so that naming this response continues the same
+			// conversation without replaying discarded partial output.
+			rs.keep(interruptedID, held, fresh, nil)
+		}
 		return
 	}
 	if !out.ended {
