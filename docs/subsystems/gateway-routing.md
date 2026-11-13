@@ -3071,6 +3071,12 @@ serves it on `/v1/responses`, `/responses` and the Codex backend's
   is answered `response.interrupt.accepted`, then an interrupted
   `response.incomplete`; one naming another reply, or none in flight,
   `response.interrupt.failed`. Other frames during a turn wait for it.
+  An explicitly interrupted streamed turn keeps its input under that
+  response ID before the acknowledgement is sent. Its discarded partial
+  output is not kept, matching the empty `response.incomplete.output`.
+  A subsequent turn on the same socket can name the interrupted ID and
+  append only new input. Ordinary client disconnects and upstream failures
+  do not enter this path (`TestResponsesSocketInterruptedResponseContinues`).
 - An upstream cut the gateway tells as `response.failed` goes back as
   that frame, and the reply isn't kept; a stream that still ends with no
   terminal event closes the socket 1011, as an HTTP stream would be cut
