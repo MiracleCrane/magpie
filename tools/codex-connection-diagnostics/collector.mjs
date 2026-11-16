@@ -70,7 +70,7 @@ async function main() {
   fs.mkdirSync(logs, { recursive: true });
   try {
     const previous = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
-    if (Date.now() - Date.parse(previous.updatedAt) < 15000) {
+    if (previous.running === true && Date.now() - Date.parse(previous.updatedAt) < 15000) {
       process.kill(previous.pid, 0);
       return;
     }
