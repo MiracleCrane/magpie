@@ -24,6 +24,9 @@ test('proxy join rejects a reused port and a different proxy listener', () => {
   assert.equal(matchesConnection(wire, { ...clash, start: '2026-11-16T07:45:18.000Z' }), false);
   assert.equal(matchesConnection(wire, { ...clash, metadata: { ...clash.metadata, inboundPort: 7898 } }), false);
   assert.equal(matchesConnection(wire, { ...clash, metadata: { ...clash.metadata, sourcePort: 12346 } }), false);
+  const endedWire = { ...wire, close_finished_ns: String(BigInt(wire.created_ns) + 100000000n) };
+  assert.equal(matchesConnection(endedWire, { ...clash, start: '2026-11-16T07:35:18.101Z' }), false);
+  assert.equal(matchesConnection(wire, { ...clash, metadata: { ...clash.metadata, inboundPort: undefined } }), false);
 });
 
 test('errors are classified without copying diagnostic text', () => {

@@ -45,8 +45,15 @@ function sourceOf(c) {
 export function matchesConnection(wire, clash) {
   const proxyPort = Number(wire.peer?.slice(wire.peer.lastIndexOf(':') + 1));
   const inbound = clash.metadata?.inboundPort;
-  return wire.local === sourceOf(clash) && (!inbound || Number(inbound) === proxyPort) &&
-    Math.abs(Number(wire.created_ns) / 1e6 - Date.parse(clash.start)) < 5000;
+  if (wire.local !== sourceOf(clash) || !inbound || Number(inbound) !== proxyPort) return false;
+  try {
+    const fraction = /\.(\d+)/.exec(clash.start)?.[1] || '';
+    const start = BigInt(Date.parse(clash.start)) * 1000000n + BigInt(fraction.slice(3).padEnd(6, '0').slice(0, 6));
+    const created = BigInt(wire.created_ns);
+    const difference = start > created ? start - created : created - start;
+    const ended = wire.close_finished_ns || wire.close_started_ns;
+    return difference < 5000000000n && (!ended || start <= BigInt(ended));
+  } catch { return false; }
 }
 
 async function main() {
