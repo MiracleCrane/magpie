@@ -5,6 +5,17 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ExpectedCurrentSha256
 )
 $ErrorActionPreference = 'Stop'
+function Get-ActiveMagpieHosts {
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    foreach ($process in $processes) {
+        if ($process.Name -notmatch '^(magpie|codex|ChatGPT)\.exe$') { continue }
+        if ($process.Name -ieq 'codex.exe') {
+            $parent = $processes | Where-Object ProcessId -eq $process.ParentProcessId | Select-Object -First 1
+            if ($parent.Name -ieq 'QuotaOrb.exe') { continue }
+        }
+        $process
+    }
+}
 $package = [IO.Path]::GetFullPath($PackageDirectory)
 $targetPath = [IO.Path]::GetFullPath($Target)
 $candidate = Join-Path $package 'magpie.exe'
@@ -20,7 +31,7 @@ public static class MagpiePackageIcons {
 }
 '@
 if ([MagpiePackageIcons]::ExtractIconEx($candidate, -1, $null, $null, 0) -eq 0) { throw 'Package has no executable icon resources.' }
-$active = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -match '^(magpie|codex|ChatGPT)\.exe$' })
+$active = @(Get-ActiveMagpieHosts)
 if ($active.Count) { throw 'Finish work and fully exit Codex and Magpie, including the tray. No process was stopped or file replaced.' }
 if (-not $PSCmdlet.ShouldProcess($targetPath, "Install $($manifest.version) with verified backup")) { return }
 $backupRoot = Join-Path (Split-Path -Parent $targetPath) ('backups\' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '-codex-patches')
@@ -32,7 +43,7 @@ $pending = Join-Path (Split-Path -Parent $targetPath) ('magpie-install-' + [guid
 try {
     Copy-Item -LiteralPath $candidate -Destination $pending
     if ((Get-FileHash -LiteralPath $pending -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'Copied package checksum mismatch.' }
-    $active = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -match '^(magpie|codex|ChatGPT)\.exe$' })
+    $active = @(Get-ActiveMagpieHosts)
     if ($active.Count) { throw 'Codex or Magpie started while preparing installation; close them and retry.' }
     Move-Item -LiteralPath $pending -Destination $targetPath -Force
     if ((Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'Installed checksum mismatch; restore the verified backup before starting Magpie.' }
