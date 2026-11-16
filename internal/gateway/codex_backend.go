@@ -1261,6 +1261,9 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			// dropped one, an item taken out) is its Before
 			var asking, asked, wrote atomic.Int64
 			traced := httptrace.WithClientTrace(attempt, nt.hooks(&asking, &asked, &wrote))
+			if rest == "/responses" && base == provider.CodexBase {
+				traced = withTransportDiagnostic(traced, routeOf(tr), nativeSessionOf(r.Header), r.RemoteAddr)
+			}
 			ctx := provider.ViaSignedIn(traced, "codex")
 			if on != nil {
 				ctx = on.Via(traced)

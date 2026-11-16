@@ -4134,6 +4134,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// step of its way out, for the Routing page to say whose time
 			// a slow turn was (TryNet)
 			ctx = httptrace.WithClientTrace(ctx, nt.hooks(&asking, &asked, &wrote))
+			if c.p.ID == "codex" || c.p.Account != nil && c.p.Account.Agent == "codex" {
+				ctx = withTransportDiagnostic(ctx, tr.ID, nativeSessionOf(r.Header), r.RemoteAddr)
+			}
 			// the headers of its vendor's reply the provider passes on go
 			// with the try's own, to the agent if it is the one it gets
 			// (#4145)

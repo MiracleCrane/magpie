@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"sync"
@@ -337,10 +338,31 @@ func (t codexSocket) socket(req *http.Request, msg []byte, key string, shape *co
 	stop := context.AfterFunc(req.Context(), cancel)
 	timer := time.AfterFunc(codexSocketDial, cancel)
 	u := *req.URL
+	var observed atomic.Pointer[diagnosticConn]
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) {
+		if c := diagnosticConnOf(i.Conn); c != nil {
+			observed.Store(c)
+		}
+	}})
 	c, hs, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
 		HTTPClient:      &http.Client{Transport: t.next, CheckRedirect: provider.KeepsCredentials},
 		HTTPHeader:      codexSocketHeaders(req),
 		CompressionMode: websocket.CompressionNoContextTakeover,
+		OnPingReceived: func(ctx context.Context, _ []byte) bool {
+			if c := observed.Load(); c != nil {
+				c.pings.Add(1)
+				c.lastPing.Store(time.Now().UnixNano())
+				diagnosticRequestOf(ctx).emit("ws_ping_received", c, nil)
+			}
+			return true
+		},
+		OnPongReceived: func(ctx context.Context, _ []byte) {
+			if c := observed.Load(); c != nil {
+				c.pongs.Add(1)
+				c.lastPong.Store(time.Now().UnixNano())
+				diagnosticRequestOf(ctx).emit("ws_pong_received", c, nil)
+			}
+		},
 	})
 	stopped := timer.Stop()
 	going := stop()
@@ -382,7 +404,7 @@ func (t codexSocket) socket(req *http.Request, msg []byte, key string, shape *co
 		}
 		header[k] = vs
 	}
-	k := &codexKept{c: c, cancel: cancel, key: key, host: u.Host, header: header, opened: time.Now()}
+	k := &codexKept{c: c, cancel: cancel, key: key, host: u.Host, header: header, opened: time.Now(), diagnostic: observed.Load()}
 	return t.turn(req, k, msg, shape, false)
 }
 
@@ -390,6 +412,8 @@ func (t codexSocket) socket(req *http.Request, msg []byte, key string, shape *co
 // a kept socket (reused), whatever fails before the reply is handed on
 // is errCodexSocketAgain.
 func (t codexSocket) turn(req *http.Request, k *codexKept, msg []byte, shape *codexTurnShape, reused bool) (*http.Response, error) {
+	body := &codexSocketBody{c: k.c, ctx: req.Context(), k: k, shape: shape, traceID: codexSocketTraceID.Add(1)}
+	body.diagnose("ws_bind", nil, reused)
 	ended := func(err error) error {
 		if req.Context().Err() != nil {
 			return req.Context().Err()
@@ -400,13 +424,15 @@ func (t codexSocket) turn(req *http.Request, k *codexKept, msg []byte, shape *co
 		}
 		return err
 	}
+	body.diagnose("ws_send_start", nil, reused)
 	if err := k.c.Write(req.Context(), websocket.MessageText, msg); err != nil {
+		body.diagnose("ws_send_error", err, reused)
 		k.close()
 		return nil, ended(err)
 	}
+	body.diagnose("ws_send_done", nil, reused)
 	wroteSocket(req.Context(), len(msg))
 	header := k.header.Clone()
-	body := &codexSocketBody{c: k.c, ctx: req.Context(), k: k, shape: shape, traceID: codexSocketTraceID.Add(1)}
 	for range codexSocketPrelude {
 		frame, err := body.frame()
 		if err != nil {
@@ -597,19 +623,45 @@ func sseEvent(kind string, frame []byte) []byte {
 var codexSocketTraceID atomic.Uint64
 
 type codexSocketBody struct {
-	c           *websocket.Conn
-	ctx         context.Context
-	k           *codexKept
-	shape       *codexTurnShape // nil: the socket isn't kept after the turn
-	output      []itemSum
-	pending     []byte
-	done        bool
-	err         error
-	closed      atomic.Bool
-	traceID     uint64
-	frames      uint64
-	frameBytes  uint64
-	lastFrameAt time.Time
+	c                *websocket.Conn
+	ctx              context.Context
+	k                *codexKept
+	shape            *codexTurnShape // nil: the socket isn't kept after the turn
+	output           []itemSum
+	pending          []byte
+	done             bool
+	err              error
+	closed           atomic.Bool
+	traceID          uint64
+	frames           uint64
+	frameBytes       uint64
+	lastFrameAt      time.Time
+	deliveredBytes   int64
+	lastDeliveredAt  time.Time
+	lastDiagnosticAt time.Time
+}
+
+func (b *codexSocketBody) diagnose(kind string, err error, reused bool) {
+	d := diagnosticRequestOf(b.ctx)
+	if d == nil {
+		return
+	}
+	e := transportDiagnosticEvent{Event: kind}
+	if b.k.diagnostic != nil {
+		e = b.k.diagnostic.snapshot(kind)
+	}
+	d.fill(&e)
+	e.Trace, e.Reused, e.Frames, e.FrameBytes, e.Terminal = b.traceID, reused, b.frames, b.frameBytes, b.done
+	if !b.lastFrameAt.IsZero() {
+		e.LastFrame = b.lastFrameAt.UnixNano()
+	}
+	e.DeliveredBytes = b.deliveredBytes
+	if !b.lastDeliveredAt.IsZero() {
+		e.LastDelivered = b.lastDeliveredAt.UnixNano()
+	}
+	e.Error, e.Errno = transportErrorClass(err)
+	e.CloseStatus, e.Cancelled = int(websocket.CloseStatus(err)), b.ctx.Err() != nil
+	emitTransportDiagnostic(e)
 }
 
 // frame is the socket's next frame, nil for one the reply leaves out.
@@ -619,6 +671,7 @@ func (b *codexSocketBody) frame() ([]byte, error) {
 	}
 	typ, data, err := b.c.Read(b.ctx)
 	if err != nil {
+		b.diagnose("ws_read_error", err, false)
 		// Preserve the close status before close() cancels the context and
 		// normal closure is flattened to EOF. Never log the peer's reason,
 		// error text, frame content, headers or conversation identifiers.
@@ -658,6 +711,7 @@ func (b *codexSocketBody) frame() ([]byte, error) {
 		}
 	case "response.completed":
 		b.done = true
+		b.diagnose("ws_terminal", nil, false)
 		if id := gjson.GetBytes(data, "response.id").String(); id != "" && b.shape != nil {
 			// kept for the conversation's next turn, which may carry on
 			// from this one
@@ -669,6 +723,7 @@ func (b *codexSocketBody) frame() ([]byte, error) {
 		}
 	case "response.failed", "response.incomplete", "response.done", "error":
 		b.done = true
+		b.diagnose("ws_terminal", nil, false)
 		b.k.closeNormally()
 	}
 	return data, nil
@@ -698,6 +753,14 @@ func (b *codexSocketBody) Read(p []byte) (int, error) {
 	}
 	n := copy(p, b.pending)
 	b.pending = b.pending[n:]
+	if n > 0 {
+		b.deliveredBytes += int64(n)
+		b.lastDeliveredAt = time.Now()
+		if time.Since(b.lastDiagnosticAt) >= 30*time.Second {
+			b.lastDiagnosticAt = b.lastDeliveredAt
+			b.diagnose("ws_delivered", nil, false)
+		}
+	}
 	return n, nil
 }
 
@@ -706,6 +769,15 @@ func (b *codexSocketBody) Read(p []byte) (int, error) {
 func (b *codexSocketBody) Close() error {
 	if b.closed.Swap(true) {
 		return nil
+	}
+	if d := diagnosticRequestOf(b.ctx); d != nil {
+		e := transportDiagnosticEvent{Event: "ws_body_close", Trace: b.traceID, Cancelled: b.ctx.Err() != nil}
+		if b.k.diagnostic != nil {
+			e = b.k.diagnostic.snapshot("ws_body_close")
+			e.Trace, e.Cancelled = b.traceID, b.ctx.Err() != nil
+		}
+		d.fill(&e)
+		emitTransportDiagnostic(e)
 	}
 	if !b.done {
 		b.k.close()

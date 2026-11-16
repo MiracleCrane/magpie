@@ -24,6 +24,7 @@ import (
 const standInsEnv = "MAGPIE_GATEWAY_TEST_STAND_INS"
 
 func TestMain(m *testing.M) {
+	transportDiagnosticsEnabled.Store(false)
 	serveRotation()
 	groupsServed = provider.ServeGroups()
 	serveMiddleware()

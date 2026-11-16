@@ -64,19 +64,20 @@ var (
 // codexKept is a socket to the backend and what its last turn sent and
 // got back.
 type codexKept struct {
-	c       *websocket.Conn
-	cancel  context.CancelFunc
-	key     string // "" for a turn that names no conversation
-	host    string
-	header  http.Header // the handshake's, as each reply carries them
-	opened  time.Time
-	used    time.Time
-	once    sync.Once
-	timer   *time.Timer
-	fields  map[string]string
-	input   []itemSum
-	output  []itemSum
-	replyID string
+	c          *websocket.Conn
+	diagnostic *diagnosticConn
+	cancel     context.CancelFunc
+	key        string // "" for a turn that names no conversation
+	host       string
+	header     http.Header // the handshake's, as each reply carries them
+	opened     time.Time
+	used       time.Time
+	once       sync.Once
+	timer      *time.Timer
+	fields     map[string]string
+	input      []itemSum
+	output     []itemSum
+	replyID    string
 }
 
 // close ends the socket at once.

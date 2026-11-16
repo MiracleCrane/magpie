@@ -1,0 +1,23 @@
+name: Connection diagnostics
+on:
+  push:
+    branches: [lzc/codex-connection-diagnostics]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Race-check connection observations and socket lifecycle
+        run: go test -race -tags nogui ./internal/gateway -run 'TestTransportDiagnostics|TestCodexSocket|TestCodexKept|TestCodexTurn|TestResponsesSocket' -count=1
+      - name: Check collector redaction and connection association
+        run: node --test tools/codex-connection-diagnostics/collector.test.mjs
