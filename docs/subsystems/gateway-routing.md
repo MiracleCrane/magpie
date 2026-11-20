@@ -3305,6 +3305,12 @@ serves it on `/v1/responses`, `/responses` and the Codex backend's
   keeps the choice on its retries even if the cooldown expires mid-upload.
   A healthy kept socket still takes priority, and the next request checks
   the cooldown anew (`TestCodexColdHTTPRetryAfterCooldownExpires`).
+- On ChatGPT's Responses socket, an upload of at least 1 MiB is still one
+  text message. Magpie writes it in 16 KiB pieces while reading, allowing
+  the upstream's Ping to be answered during the upload. The client adds
+  no per-window acknowledgement. Early response metadata stays in order.
+  Small deltas use the ordinary
+  single write (`TestCodexUploadAnswersHeartbeatBeforeMessageEnds`).
 
 ## A Realtime session
 

@@ -507,16 +507,26 @@ func (t codexSocket) turn(req *http.Request, k *codexKept, msg []byte, shape *co
 		return err
 	}
 	trace := socketTrace(req, reused)
-	if err := k.c.Write(req.Context(), websocket.MessageText, msg); err != nil {
+	body := &codexSocketBody{c: k.c, ctx: req.Context(), k: k, shape: shape, traceID: codexSocketTraceID.Add(1)}
+	var writeErr error
+	if len(msg) >= coldTurnMinBytes && !k.copilot && provider.CodexTurnURL(req.URL) {
+		writeErr = body.upload(msg)
+	} else {
+		writeErr = k.c.Write(req.Context(), websocket.MessageText, msg)
+	}
+	if writeErr != nil {
 		k.close()
-		return nil, ended(err)
+		if !reused && !k.copilot && len(body.early) == 1 && body.early[0].err != nil &&
+			websocket.CloseStatus(writeErr) == websocket.StatusInternalError && req.Context().Err() == nil {
+			return nil, errColdInternalClose
+		}
+		return nil, ended(writeErr)
 	}
 	wroteSocket(req.Context(), len(msg))
 	if trace != nil && trace.WroteRequest != nil {
 		trace.WroteRequest(httptrace.WroteRequestInfo{})
 	}
 	header := k.header.Clone()
-	body := &codexSocketBody{c: k.c, ctx: req.Context(), k: k, shape: shape, traceID: codexSocketTraceID.Add(1)}
 	for i := range codexSocketPrelude {
 		frame, err := body.frame()
 		if i == 0 && err == nil && trace != nil && trace.GotFirstResponseByte != nil {
@@ -744,11 +754,13 @@ func sseEvent(kind string, frame []byte) []byte {
 var codexSocketTraceID atomic.Uint64
 
 type codexSocketBody struct {
-	c      *websocket.Conn
-	ctx    context.Context
-	k      *codexKept
-	shape  *codexTurnShape // nil: the socket isn't kept after the turn
-	output []itemSum
+	early   []codexUploadFrameRead
+	reading <-chan codexUploadFrameRead
+	c       *websocket.Conn
+	ctx     context.Context
+	k       *codexKept
+	shape   *codexTurnShape // nil: the socket isn't kept after the turn
+	output  []itemSum
 	// sealed: which of output are reasoning items (codexKept.sealed)
 	sealed      []bool
 	pending     []byte
@@ -766,7 +778,7 @@ func (b *codexSocketBody) frame() ([]byte, error) {
 	if b.done {
 		return nil, io.EOF
 	}
-	typ, data, err := b.c.Read(b.ctx)
+	typ, data, err := b.nextFrame()
 	if err != nil {
 		// Preserve the close status before close() cancels the context and
 		// normal closure is flattened to EOF. Never log the peer's reason,
