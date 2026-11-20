@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$Go = 'go',
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaseVersion = '0.1.4288'
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaseVersion = '0.1.4586'
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -24,7 +24,13 @@ try {
     $resources = Join-Path $repo 'rsrc_windows_amd64.syso'
     $packed = Join-Path $repo 'internal/gui/assets.zip'
     $launcher = Join-Path $repo 'internal/update/launcher-amd64.com'
-    foreach ($generated in @($resources, $packed, $launcher)) {
+    $generatedFiles = @($resources, $packed, $launcher)
+    foreach ($arch in @('amd64', 'arm64')) {
+        foreach ($name in @('conpty.dll', 'OpenConsole.exe')) {
+            $generatedFiles += Join-Path $repo "internal/conptypair/$arch/$name"
+        }
+    }
+    foreach ($generated in $generatedFiles) {
         if (Test-Path -LiteralPath $generated) { throw "Generated file already exists; inspect it first: $generated" }
     }
     $oldGOOS = $env:GOOS
@@ -35,10 +41,11 @@ try {
         $env:GOARCH = 'amd64'
         $env:CGO_ENABLED = '0'
         Invoke-Go -Arguments @('run', './build/assetpack', 'internal/gui/assets', 'internal/gui/assets.zip')
+        Invoke-Go -Arguments @('run', './build/conpty')
         Invoke-Go -Arguments @('run', 'github.com/tc-hib/go-winres@v0.3.3', 'make', '--in', 'build/windows/winres.json', '--arch', 'amd64', '--out', 'rsrc', '--file-version', $BaseVersion, '--product-version', $BaseVersion)
         Invoke-Go -Arguments @('build', '-trimpath', '-buildvcs=false', '-ldflags=-s -w', '-o', $launcher, './internal/update/launcher')
         $binary = Join-Path $destination 'magpie.exe'
-        Invoke-Go -Arguments @('build', '-tags', 'production,comlauncher,packedassets', '-trimpath', "-ldflags=-s -w -X main.version=$version -H windowsgui", '-o', $binary, '.')
+        Invoke-Go -Arguments @('build', '-tags', 'production,comlauncher,packedassets,conptypair', '-trimpath', "-ldflags=-s -w -X main.version=$version -H windowsgui", '-o', $binary, '.')
         [ordered]@{
             version = $version
             upstream = "v$BaseVersion"
@@ -52,7 +59,7 @@ try {
         $env:GOOS = $oldGOOS
         $env:GOARCH = $oldGOARCH
         $env:CGO_ENABLED = $oldCGO
-        foreach ($generated in @($resources, $packed, $launcher)) {
+        foreach ($generated in $generatedFiles) {
             if (Test-Path -LiteralPath $generated) { Remove-Item -LiteralPath $generated }
         }
     }

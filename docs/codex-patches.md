@@ -1,7 +1,7 @@
 # Codex 补丁维护
 
 此分支是个人使用的 Magpie fork，不是官方发布。源码基线为上游
-`v0.1.4288`（`c6a67dd412b372ca1757ecb96040fcc6e4b2a664`）。
+`v0.1.4586`（`76868bad610606f5823d67f177b31905edfd45b3`）。
 
 ## 保留的改动
 
@@ -11,8 +11,7 @@
 | 上游关闭状态诊断 | 原本机提交 `5e33655c14aba54514de5e608ec16f656aea1315` | 在异常被转成 EOF 前记录关闭码、帧计数、时间和取消标记；不记录请求正文、鉴权头或关闭原因原文。诊断不是断流修复。 |
 | Windows 完整构建 | `build/windows/build-codex-patches.ps1` | 沿用官方图标、DPI manifest、版本资源、UI 打包和控制台 launcher。避免只执行 GUI 编译而漏掉 exe 图标资源。 |
 
-2026-11-16 查询时 #6443 仍为 open，暂无回复；上游此版本仍在取消后
-跳过 `rs.keep`。issue 状态仅是线索，是否修复以对应版本的回归结果为准。
+2026-11-20 核验时 #6443 仍为 open。官方 v0.1.4586 上，中断后续接的两种用例均返回 previous_response_not_found；连续两轮大请求遇到零帧 1011 时仍尝试两次 WebSocket。因此保留两项补丁。
 另一个报告 #6301 的“完成与中断同时到达”竞态不在此补丁保证范围。
 
 ## 更新与自动更新
@@ -39,7 +38,7 @@
 需要对应 `go.mod` 的 Go 工具链。Windows x64：
 
 ```powershell
-& ./build/windows/build-codex-patches.ps1 -OutputDirectory C:\path\outside-repo\package -Go C:\path\go.exe -BaseVersion 0.1.4288
+& ./build/windows/build-codex-patches.ps1 -OutputDirectory C:\path\outside-repo\package -Go C:\path\go.exe -BaseVersion 0.1.4586
 ```
 
 脚本生成 `magpie.exe` 和包含源码 revision、SHA-256、版本的 `build.json`。

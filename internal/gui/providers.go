@@ -93,6 +93,9 @@ type modelJSON struct {
 	// provider (#2578): only for a model Claude Desktop, installed here,
 	// is shown and names after its own catalog, "" for every other.
 	Desktop string `json:"desktop,omitempty"`
+	// Disabled is the pattern of Settings' disabled models (#1867) that
+	// turns it off, "" for a model that isn't
+	Disabled string `json:"disabled,omitempty"`
 	// what it costs, USD per million tokens (#819): the price the user set
 	// for it, and its list price, its vendor's else its maker's, before the
 	// provider's price rate
@@ -213,7 +216,8 @@ type providerJSON struct {
 	// (provider.PinHosts), a preset's pointed at their own server too
 	TakesServerPin bool `json:"takesServerPin,omitempty"`
 	// its Responses turns over the Responses WebSocket (provider.Socket,
-	// #5781): auto, on or ""; TakesSocket: a provider of a key with a
+	// #5781): auto, on, off or "" (auto on OpenAI's own API, HTTP
+	// elsewhere: provider.SocketMode); TakesSocket: a provider of a key with a
 	// Responses URL
 	Socket      string `json:"socket"`
 	TakesSocket bool   `json:"takesSocket"`
@@ -421,6 +425,9 @@ type providerJSON struct {
 	// read said went wrong or was left as the user's (KoiLx0 on X)
 	LibraryShared bool   `json:"libraryShared,omitempty"`
 	LibraryNote   string `json:"libraryNote,omitempty"`
+	// ConnectAgents: a Remote magpie whose connected agents are
+	// connected here too, those installed here (agent.ConnectsAgents)
+	ConnectAgents bool `json:"connectAgents,omitempty"`
 	// RemoteUpdate: a Remote magpie's word on its last ask to follow
 	// this magpie's version (remoteUpdateNote)
 	RemoteUpdate *remoteUpdateJSON `json:"remoteUpdate,omitempty"`
@@ -452,6 +459,9 @@ type providerJSON struct {
 	// how many requests each key or account sends the vendor in any
 	// minute, 0 for no limit (coeo91 on Discord)
 	MaxRPM int `json:"maxRPM,omitempty"`
+	// MaxImages is how many images one request to it may carry, by the
+	// user's word: by model id, "*" for all (provider.Provider.MaxImages)
+	MaxImages map[string]int `json:"maxImages,omitempty"`
 	// RateWindows are the time-of-day windows it bills at its own rate
 	// (#2463), as the editor opens on them
 	RateWindows []provider.RateWindow `json:"rateWindows,omitempty"`
@@ -462,6 +472,10 @@ type providerJSON struct {
 	// each key's own rate on the official price, by its id, where it
 	// bills apart from PriceRate (@tnt12231 on X)
 	KeyPriceRates map[string]float64 `json:"keyPriceRates,omitempty"`
+	// what one of a sub2api relay's dollars cost the user, and each key's
+	// group rate read from the relay, by its id (@YIXIE233 on X)
+	TopUpRate     float64            `json:"topUpRate,omitempty"`
+	KeyGroupRates map[string]float64 `json:"keyGroupRates,omitempty"`
 
 	// what it charges against the official price, 0 for that (#819)
 	PriceRate float64     `json:"priceRate,omitempty"`
@@ -979,9 +993,9 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountWindowAmounts: p.AccountWindowAmounts, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, ReplyHeaders: p.ReplyHeaders, PassHeaders: p.PassHeaders, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, CountFree: p.CountFree, Billing: p.Billing, BillingKind: p.BillingKind(), InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), HTTP1: p.HTTP1, ClientCert: tilde(p.ClientCert), ClientKey: tilde(p.ClientKey), ServerCA: tilde(p.ServerCA), TakesClientCert: p.TakesClientCert(), ServerPin: p.ServerPin, TakesServerPin: p.TakesServerPin(), Resolve: p.Resolve, TakesResolve: p.TakesResolve(), Socket: p.Socket, TakesSocket: p.TakesSocket(), LimitRestOff: p.LimitRestOff, UpstreamProviders: p.UpstreamProviders, ImageFilesOff: p.ImageFilesOff, TakesImageFiles: p.TakesImageFiles(), NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: !p.MagpieUserAgent, OwnClient: p.OwnClient(), PassErrors: p.PassErrors, TakesPassErrors: p.TakesPassErrors(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, NoBalanceProbe: p.NoBalanceProbe, ModelsURL: p.ModelsURL, ListOff: p.ListsOff(), TakesListOff: p.Account == nil && !p.IsPlugin() && !p.DecideOnly(), TakesModelHeaders: p.Account == nil, DecideAPIKind: p.DecideAPIKind(),
 		Ready: p.Ready(), Chosen: p.PicksOf(avail), Agents: make([]providerAgent, 0, len(agents)),
 		Fallback: p.Fallback, Routing: p.Routing, Sink: p.Sink, UseFirst: p.UseFirst, NoStandIn: p.NoStandIn, Affinity: p.Affinity, KeepLogin: p.KeepLogin, KeepLoginAs: p.KeepLoginAs, SwitchOnly: p.SwitchOnly, RestartApp: p.RestartApp, Self: p.SelfAnswered(), KeepSelf: p.KeepSelf, ThisDevice: p.ThisDevice, CapStop: p.CapStop, CapCareful: p.CapCareful, Unlisted: p.Unlisted, NoModels: p.ServesNone(), BestInFamily: p.BestInFamily && len(p.Models) == 0 && !p.NoModels, Off: p.Off, Contexts: p.Contexts,
-		MaxConcurrency: p.MaxConcurrency, PluginConcurrency: p.PluginConcurrency(), MaxAccounts: p.MaxAccounts, PluginAccounts: p.PluginAtOnce(), PriceRate: p.PriceRate, KeyPriceRates: p.KeyPriceRates,
+		MaxConcurrency: p.MaxConcurrency, PluginConcurrency: p.PluginConcurrency(), MaxAccounts: p.MaxAccounts, PluginAccounts: p.PluginAtOnce(), PriceRate: p.PriceRate, KeyPriceRates: p.KeyPriceRates, TopUpRate: p.TopUpRate, KeyGroupRates: keyGroupRatesOf(p),
 		RateWindows: p.RateWindows, RateNow: rateNowOf(p, time.Now()),
-		AccountConcurrency: p.AccountConcurrency, AccountWeights: p.AccountWeights, QueueLimit: p.QueueLimit, QueueWait: p.QueueWait, MaxRPM: p.MaxRPM,
+		AccountConcurrency: p.AccountConcurrency, AccountWeights: p.AccountWeights, QueueLimit: p.QueueLimit, QueueWait: p.QueueWait, MaxRPM: p.MaxRPM, MaxImages: p.MaxImages,
 		Outputs: provider.OutputsOf(p.ID), Compacts: provider.CompactsOf(p.ID),
 	}
 	if p.Account != nil && p.Account.Agent == p.ID {
@@ -1075,7 +1089,10 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 	if out.KeyList == nil {
 		out.KeyList = []provider.KeyInfo{}
 	}
-	// a key the gateway passes over after a failure says so on its row
+	// a key the gateway passes over after a failure says so on its row,
+	// with the vendor's words, as an account's row does (accountRests):
+	// without them a key's "400 · out of credit" said nothing of what its
+	// vendor answered (@YsiCing on X)
 	restKey := p.RestKeys()
 	for i, k := range out.KeyList {
 		if !k.On {
@@ -1083,7 +1100,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		}
 		key := restKey(k)
 		if r, ok := keyRestOf(key); ok {
-			out.KeyList[i].Rest = &provider.KeyRest{Why: r.Why, Status: r.Status, Until: r.Until, Key: key, Probed: r.Probed, Rate: r.Rate}
+			out.KeyList[i].Rest = &provider.KeyRest{Why: r.Why, Status: r.Status, Until: r.Until, Key: key, Probed: r.Probed, By: r.By, Error: r.Error, Rate: r.Rate}
 		}
 	}
 	// and one with a spend cap, what it has spent of it (the gateway
@@ -1192,6 +1209,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 	// the provider's catalogs worked out once, and each model priced once
 	// for its list price and whether it is free
 	pricer := p.Pricer()
+	disabled := provider.DisabledPattern()
 	// each model's provider/model ref, made once: the settings' maps and
 	// every agent's hidden list are looked up by it
 	var refs []string
@@ -1269,7 +1287,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		// a value the page reads as its default isn't sent: the window and
 		// reply limit the vendor listed are the ones in use unless the user
 		// set their own, and most models merge by their own id
-		if j.Merge = provider.MergeName(m.ID); j.Merge == m.ID {
+		if j.Merge = provider.MergeName(p, m.ID); j.Merge == m.ID {
 			j.Merge = ""
 		}
 		if j.Listed == j.Context {
@@ -1279,6 +1297,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 			j.ListedOutput = 0
 		}
 		j.Desktop = desktop[ref]
+		j.Disabled = disabled(p.ID, m.ID)
 		if mp, ok := held.ModelPrices[ref]; ok {
 			if pr, bad := mp.Price(); bad == "" {
 				j.Price = &pr
@@ -1522,6 +1541,7 @@ func providersState() providersJSON {
 	desktop := desktopNumbers(uses)
 	have := map[string]bool{}
 	var remoteMCP map[string]bool // read once, at the first Remote magpie
+	var connects map[string]bool  // the same
 	all := provider.All()
 	// both lists made once at their size: each grown by append was 6 MB of
 	// what forty polls of the Providers page allocated with real accounts
@@ -1539,6 +1559,10 @@ func providersState() providersJSON {
 			info.LibraryMCP = remoteMCP[p.ID]
 			info.LibraryShared = library.BorrowedOn()[p.ID]
 			info.LibraryNote = library.BorrowNote(p.ID)
+			if connects == nil {
+				connects = agent.ConnectsAgents()
+			}
+			info.ConnectAgents = connects[p.ID]
 			info.RemoteUpdate = remoteUpdateNote(p.ID, time.Now())
 		}
 		s.Providers = append(s.Providers, info)
@@ -1910,7 +1934,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// save that leaves it out keeps it
 			HTTP1 *bool `json:"http1"`
 			// Socket is how its Responses turns go over the Responses
-			// WebSocket (#5781): auto, on, or "" for HTTP alone; a save
+			// WebSocket (#5781): auto, on, off, or "" for its default; a save
 			// that leaves it out keeps it
 			Socket *string `json:"socket"`
 			// LimitRestOff is whether a quota refusal or a 429 leaves it
@@ -1956,7 +1980,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			RateWindows json.RawMessage `json:"rateWindows"`
 			// PriceRate is what it charges against the official price
 			// (#819): a number, null or 0 for none; left out, it is kept
-			PriceRate    json.RawMessage `json:"priceRate"`
+			PriceRate json.RawMessage `json:"priceRate"`
+			// TopUpRate is what one of a sub2api relay's dollars cost
+			// (@YIXIE233 on X): a number, null or 0 for none; left out,
+			// it is kept
+			TopUpRate    json.RawMessage `json:"topUpRate"`
 			AccountOrder []string        `json:"accountOrder"`
 			// New is set by the editor's Add: the provider is one more, never
 			// one replacing the provider that has its id or name
@@ -1979,6 +2007,10 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// LibraryShared, on a Remote magpie, is the switch for its
 			// Library's skills and prompts (library.SetBorrow)
 			LibraryShared *bool `json:"libraryShared"`
+			// ConnectAgents, on a Remote magpie, is the switch that
+			// connects here the agents it has connected
+			// (agent.SetConnectAgents)
+			ConnectAgents *bool `json:"connectAgents"`
 			// CopyOf, with New, is the provider the new one is a copy of
 			// (#268): its key and what else the form doesn't carry are
 			// taken from it when left out
@@ -2229,6 +2261,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// its key when the form left it blank
 			if pr, err := provider.FromPreset(in.Preset); err == nil && in.Chat == "" && in.Responses == "" && in.Anthropic == "" && in.Gemini == "" {
 				pr.Key, pr.Models, pr.Fallback, pr.Headers, pr.BalanceToken, pr.Contexts = in.Key, in.Models, in.Fallback, in.Headers, in.BalanceToken, in.Contexts
+				pr.MaxImages = in.MaxImages
 				pr.ZhipuTeam = in.ZhipuTeam
 				pr.NoModels = in.NoModels
 				pr.BestInFamily = in.BestInFamily
@@ -2330,6 +2363,12 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				return
 			}
 			in.PriceRate = rate
+			topUp, keepTopUp, err := topUpRateOf(req.TopUpRate)
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			in.TopUpRate = topUp
 			// each key's own rate, by its id (@tnt12231 on X): {} takes
 			// them all off, left out they are kept
 			for k, r := range in.KeyPriceRates {
@@ -2486,6 +2525,12 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				}
 				if keepRate && old != nil {
 					in.PriceRate = old.PriceRate
+				}
+				if keepTopUp && old != nil {
+					in.TopUpRate = old.TopUpRate
+				}
+				if in.TopUpRate > 0 && (old == nil || old.TopUpRate != in.TopUpRate) {
+					defer provider.ReadKeyRatesSoon()
 				}
 				if in.KeyPriceRates == nil && old != nil {
 					in.KeyPriceRates = old.KeyPriceRates
@@ -2649,6 +2694,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 					if in.Contexts == nil {
 						in.Contexts = old.Contexts // a save that doesn't say
 					}
+					if in.MaxImages == nil {
+						in.MaxImages = old.MaxImages // likewise
+					}
 					if in.Key == old.Key {
 						in.KeyName, in.KeyProtocol, in.KeyWeight, in.KeyPlan = old.KeyName, old.KeyProtocol, old.KeyWeight, old.KeyPlan
 					}
@@ -2716,6 +2764,14 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 						return
 					}
 					askHub = *req.LibraryMCP
+				}
+			}
+			if req.ConnectAgents != nil {
+				if p, err := provider.Find(in.ID); err == nil && p.IsRemoteMagpie() && agent.ConnectsAgents()[in.ID] != *req.ConnectAgents {
+					agent.SetConnectAgents(in.ID, *req.ConnectAgents)
+					if *req.ConnectAgents {
+						go agent.FollowRemotePicks(context.Background())
+					}
 				}
 			}
 			if req.LibraryShared != nil {
@@ -3954,6 +4010,43 @@ func priceRateOf(raw json.RawMessage) (r float64, keep bool, err error) {
 		return 0, false, fmt.Errorf("%s, not %v", bad, *n)
 	}
 	return *n, false, nil
+}
+
+// topUpRateOf is a save's topUpRate: keep when the save left it out, 0
+// for null, else the rate.
+func topUpRateOf(raw json.RawMessage) (r float64, keep bool, err error) {
+	if len(raw) == 0 {
+		return 0, true, nil
+	}
+	var n *float64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, false, fmt.Errorf("a top-up rate is a number, like 0.07, not %s", raw)
+	}
+	if n == nil {
+		return 0, false, nil
+	}
+	if bad := provider.TopUpRateOK(*n); bad != "" {
+		return 0, false, fmt.Errorf("%s, not %v", bad, *n)
+	}
+	return *n, false, nil
+}
+
+// keyGroupRatesOf is each of p's keys' group rate read from its relay, by
+// the key's id: nil when none was read.
+func keyGroupRatesOf(p provider.Provider) map[string]float64 {
+	if p.Account != nil || p.Key == "" {
+		return nil
+	}
+	var out map[string]float64
+	for _, k := range p.KeyList() {
+		if g, ok := p.KeyGroupRate(k.ID); ok {
+			if out == nil {
+				out = map[string]float64{}
+			}
+			out[k.ID] = g
+		}
+	}
+	return out
 }
 
 // rateWindowsOf is a save's rateWindows: keep when the save left it out,
