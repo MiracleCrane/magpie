@@ -10,6 +10,53 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestResponsesSocketInterruptWaitingForFirstID(t *testing.T) {
+	fresh(t)
+	waiting, release := make(chan struct{}), make(chan struct{})
+	u := &respUp{reply: func(w http.ResponseWriter, r *http.Request, n int) {
+		close(waiting)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, sse(
+			`data: {"type":"response.created","response":{"id":"resp_delayed"}}`,
+			`data: {"type":"response.output_text.delta","delta":"ready"}`))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}}
+	sockUp(t, u)
+	_, ts := sockServer(t)
+	c, _, err := dialSock(t, ts, CodexPath+"/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.send(create("", userHi))
+	select {
+	case <-waiting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not reach the backend")
+	}
+	interrupt := `{"type":"response.interrupt","response_id":"resp_delayed","mode":"discard_partial_items"}`
+	c.send(interrupt)
+	if _, err := c.until("response.interrupt.failed"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if _, err := c.until("response.created"); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	c.send(interrupt)
+	got, err := c.until("response.incomplete")
+	if err != nil || last(got).Get("response.id").String() != "resp_delayed" {
+		t.Fatalf("interrupt after first ID: %v, %v", got, err)
+	}
+	t.Logf("interrupt to terminal frame after first ID: %v", time.Since(start))
+}
+
 func TestResponsesSocketInterruptedResponseContinues(t *testing.T) {
 	for _, prior := range []bool{false, true} {
 		name := "fresh"

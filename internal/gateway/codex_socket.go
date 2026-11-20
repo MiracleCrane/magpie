@@ -221,9 +221,21 @@ func (t codexSocket) overSocket(req *http.Request, shun bool) (*http.Response, e
 			}
 		}
 	}
-	if coldKey != "" && coldTurns.blocked(coldKey, time.Now()) {
-		log.Print("codex-transport: large cold turn using HTTP after zero-frame 1011")
-		return viaHTTP()
+	retry, _ := req.Context().Value(coldRetryKey{}).(*sync.Map)
+	if coldKey != "" {
+		if retry != nil {
+			if _, ok := retry.Load(coldKey); ok {
+				log.Print("codex-transport: retry staying on HTTP after zero-frame 1011")
+				return viaHTTP()
+			}
+		}
+		if coldTurns.blocked(coldKey, time.Now()) {
+			if retry != nil {
+				retry.Store(coldKey, true)
+			}
+			log.Print("codex-transport: large cold turn using HTTP after zero-frame 1011")
+			return viaHTTP()
+		}
 	}
 	if codexMessageTooBig(req.URL.Host, len(msg)) {
 		return viaHTTP()
@@ -235,6 +247,9 @@ func (t codexSocket) overSocket(req *http.Request, shun bool) (*http.Response, e
 		}
 		if coldKey != "" {
 			coldTurns.remember(coldKey, time.Now())
+			if retry != nil {
+				retry.Store(coldKey, true)
+			}
 		}
 		return viaHTTP()
 	}

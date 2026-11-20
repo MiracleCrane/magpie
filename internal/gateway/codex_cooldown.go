@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -12,6 +13,17 @@ const coldTurnCooldown = 5 * time.Minute
 const maxColdTurns = 128
 
 var coldTurns = new(coldTurnCache)
+
+type coldRetryKey struct{}
+
+// Keep the HTTP decision across attempts of one request, even when the
+// conversation cooldown expires while an HTTP upload is in flight.
+func withColdRetry(ctx context.Context) context.Context {
+	if ctx.Value(coldRetryKey{}) != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, coldRetryKey{}, new(sync.Map))
+}
 
 type coldTurnCache struct {
 	mu    sync.Mutex

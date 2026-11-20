@@ -322,17 +322,23 @@ func (rs *responsesSocket) serve() {
 					rs.write(ctx, interruptReply("response.interrupt.failed", id))
 					continue
 				}
+				trace := newID()
+				received := time.Now()
 				stop()
+				log.Printf("responses interrupt: trace=%s received", trace)
 				<-done
+				drained := time.Since(received)
 				waiting = false
-				rs.write(ctx, interruptReply("response.interrupt.accepted", id))
+				ackErr := rs.write(ctx, interruptReply("response.interrupt.accepted", id))
 				// the reply ends as interrupted: Codex keeps none of it
 				// (discard_partial_items) and waits for its end
 				end, _ := json.Marshal(map[string]any{"type": "response.incomplete", "response": map[string]any{
 					"id": id, "object": "response", "status": "incomplete",
 					"incomplete_details": map[string]any{"reason": "interrupted"}, "output": []any{},
 				}})
-				rs.write(ctx, end)
+				endErr := rs.write(ctx, end)
+				log.Printf("responses interrupt: trace=%s drain_ms=%d total_ms=%d accepted_sent=%t incomplete_sent=%t",
+					trace, drained.Milliseconds(), time.Since(received).Milliseconds(), ackErr == nil, endErr == nil)
 			}
 		}
 		stop()

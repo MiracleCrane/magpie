@@ -2702,7 +2702,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// what the request's tries send up to the vendor is summed in its
 	// context, where forwardOnce and codexBackend add each try's bytes,
 	// for the ledger row to read (#4456)
-	r = r.WithContext(s.countBytes(r.Context()))
+	r = r.WithContext(withColdRetry(s.countBytes(r.Context())))
 	defer func() { watched.end(call, time.Since(start).Milliseconds()) }()
 	switch call.Kind {
 	case "web_search":

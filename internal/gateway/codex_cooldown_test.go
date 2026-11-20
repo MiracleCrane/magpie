@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -9,7 +11,71 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/yetone/magpie/internal/provider"
 )
+
+func TestCodexColdHTTPRetryAfterCooldownExpires(t *testing.T) {
+	for _, tc := range []struct {
+		model   string
+		cooling bool
+	}{
+		{"gpt-5.5", false},
+		{"gpt-5.5", true},
+		{"codex/gpt-5.5", true},
+	} {
+		t.Run(tc.model+"/cooling="+strconv.FormatBool(tc.cooling), func(t *testing.T) {
+			codexSignedIn(t)
+			socketOn(t)
+			cache := coldTurns
+			coldTurns = new(coldTurnCache)
+			t.Cleanup(func() { coldTurns = cache })
+			f := &fakeSocketBackend{whole: true, closeWith: websocket.StatusInternalError,
+				frames: func(socketTurn) []string { return nil }}
+			var drop atomic.Bool
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost && drop.Swap(false) {
+					io.Copy(io.Discard, r.Body)
+					// Expire the cache while the HTTP attempt is in flight,
+					// without sleeping five minutes or changing the retry clock.
+					coldTurns.mu.Lock()
+					for key := range coldTurns.until {
+						coldTurns.until[key] = time.Time{}
+					}
+					coldTurns.mu.Unlock()
+					c, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					c.Close()
+					return
+				}
+				f.ServeHTTP(w, r)
+			}))
+			t.Cleanup(up.Close)
+			forgetCodexLists(t)
+			base := provider.CodexBase
+			provider.CodexBase = up.URL + "/backend-api/codex"
+			t.Cleanup(func() { provider.CodexBase = base })
+			if err := provider.Save(provider.Provider{ID: "codex", Models: []string{"gpt-5.5"}}); err != nil {
+				t.Fatal(err)
+			}
+			big := keptTurn("retry", tc.model, strings.Replace(userPing, "ping", strings.Repeat("x", 1100000), 1))
+			if tc.cooling {
+				keptPost(t, "account", big)
+			}
+			drop.Store(true)
+			keptPost(t, "account", big)
+			if got := f.opened(); got != 1 || drop.Load() {
+				t.Fatalf("after the HTTP retry, WebSocket handshakes=%d, want 1", got)
+			}
+			keptPost(t, "account", big)
+			if got := f.opened(); got != 2 {
+				t.Fatalf("new request after expiry: WebSocket handshakes=%d, want 2", got)
+			}
+		})
+	}
+}
 
 func TestCodexLargeCold1011Routes(t *testing.T) {
 	socketOn(t)

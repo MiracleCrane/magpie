@@ -3276,6 +3276,9 @@ serves it on `/v1/responses`, `/responses` and the Codex backend's
   A subsequent turn on the same socket can name the interrupted ID and
   append only new input. Ordinary client disconnects and upstream failures
   do not enter this path (`TestResponsesSocketInterruptedResponseContinues`).
+  For an accepted interrupt the gateway logs a trace at cancellation and
+  the time to drain the old turn and send both replies under that trace.
+  These timings start when the gateway handles the interrupt frame.
 - An upstream cut the gateway tells as `response.failed` goes back as
   that frame, and the reply isn't kept; a stream that still ends with no
   terminal event closes the socket 1011, as an HTTP stream would be cut
@@ -3296,6 +3299,12 @@ serves it on `/v1/responses`, `/responses` and the Codex backend's
   is sent the whole conversation each turn, since those protocols keep
   nothing between requests. A socket's conversation doesn't outlive the
   socket or the gateway.
+- After a fresh ChatGPT socket closes 1011 before its first frame on a
+  full turn of at least 1 MiB, Magpie remembers that account, conversation
+  and model for five minutes. A request that chose HTTP on that evidence
+  keeps the choice on its retries even if the cooldown expires mid-upload.
+  A healthy kept socket still takes priority, and the next request checks
+  the cooldown anew (`TestCodexColdHTTPRetryAfterCooldownExpires`).
 
 ## A Realtime session
 
