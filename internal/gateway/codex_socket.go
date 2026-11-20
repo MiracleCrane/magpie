@@ -177,6 +177,15 @@ func (t codexSocket) overSocket(req *http.Request, shun bool) (*http.Response, e
 	msg := codexCreate(body)
 	var shape *codexTurnShape
 	key := codexKeepKey(req, body)
+	// A full turn can go over HTTP, but an explicit response ID may only
+	// exist on the socket that created it.
+	var coldKey string
+	if key != "" && len(msg) >= coldTurnMinBytes && provider.CodexTurnURL(req.URL) &&
+		!gjson.GetBytes(body, "previous_response_id").Exists() {
+		if model := gjson.GetBytes(body, "model").String(); len(model) > 0 && len(model) <= 256 {
+			coldKey = key + "/" + model
+		}
+	}
 	if key != "" {
 		if s, ok := codexShape(body); ok {
 			shape = s
@@ -198,10 +207,23 @@ func (t codexSocket) overSocket(req *http.Request, shun bool) (*http.Response, e
 			}
 		}
 	}
+	if coldKey != "" && coldTurns.blocked(coldKey, time.Now()) {
+		log.Print("codex-transport: large cold turn using HTTP after zero-frame 1011")
+		return viaHTTP()
+	}
 	if codexMessageTooBig(req.URL.Host, len(msg)) {
 		return viaHTTP()
 	}
 	res, err := t.socket(req, msg, key, shape, shun)
+	if errors.Is(err, errColdInternalClose) {
+		if req.Context().Err() != nil {
+			return nil, req.Context().Err()
+		}
+		if coldKey != "" {
+			coldTurns.remember(coldKey, time.Now())
+		}
+		return viaHTTP()
+	}
 	if errors.Is(err, errCodexSocketFallBack) {
 		return viaHTTP()
 	}
@@ -213,7 +235,8 @@ var (
 	errCodexSocketFallBack = errors.New("codex: over HTTP")
 	// errCodexSocketAgain says a kept socket failed before the reply was
 	// handed on, and the turn goes whole on a new one.
-	errCodexSocketAgain = errors.New("codex: on a new socket")
+	errCodexSocketAgain  = errors.New("codex: on a new socket")
+	errColdInternalClose = errors.New("codex: fresh socket closed 1011 before its first frame")
 )
 
 // codexSocketMessage is req's turn as the body of the socket's
@@ -441,6 +464,9 @@ func (t codexSocket) turn(req *http.Request, k *codexKept, msg []byte, shape *co
 		}
 		if err != nil {
 			body.Close()
+			if !reused && body.frames == 0 && websocket.CloseStatus(err) == websocket.StatusInternalError && req.Context().Err() == nil {
+				return nil, errColdInternalClose
+			}
 			// nothing of the reply has been handed on yet
 			return nil, ended(err)
 		}
