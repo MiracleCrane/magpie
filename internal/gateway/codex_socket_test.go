@@ -150,6 +150,7 @@ func socketOn(t *testing.T) {
 		codexShunMu.Lock()
 		clear(codexShun)
 		clear(codexTooBig)
+		clear(codexNoDelta)
 		codexShunMu.Unlock()
 	})
 }

@@ -1,0 +1,12 @@
+--- a/usage.mjs
++++ b/usage.mjs
+@@ -6,7 +6,8 @@
+ import { familiesInGroup } from "./model-ids.mjs"
+ import { cannotSignIn, isDead, noteDead, storedSignIn, storedToken } from "./signin.mjs"
+
+-const DEFAULT_TIMEOUT_MS = 15_000
++// Keep roughly 12s for the Windows CLI after a slow direct read.
++const DEFAULT_TIMEOUT_MS = 18_000
+ const MAX_TIMEOUT_MS = 18_000 // Magpie bounds an auth.usage call to 20 seconds.
+ const MAX_OUTPUT_BYTES = 1024 * 1024
+ // The direct read made before agy -p (fetchUsage's first) takes about 1.5

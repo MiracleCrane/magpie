@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$Go = 'go',
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaseVersion = '0.1.4586'
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaseVersion = '0.1.4777'
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

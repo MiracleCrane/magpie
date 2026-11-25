@@ -1,7 +1,7 @@
 # Codex 补丁维护
 
 此分支是个人使用的 Magpie fork，不是官方发布。源码基线为上游
-`v0.1.4586`（`76868bad610606f5823d67f177b31905edfd45b3`）。
+`v0.1.4777`（`5180600b4daa3d7226908f408c8d6bb249d3fcbf`）。
 
 ## 保留的改动
 
@@ -38,7 +38,7 @@
 需要对应 `go.mod` 的 Go 工具链。Windows x64：
 
 ```powershell
-& ./build/windows/build-codex-patches.ps1 -OutputDirectory C:\path\outside-repo\package -Go C:\path\go.exe -BaseVersion 0.1.4586
+& ./build/windows/build-codex-patches.ps1 -OutputDirectory C:\path\outside-repo\package -Go C:\path\go.exe -BaseVersion 0.1.4777
 ```
 
 脚本生成 `magpie.exe` 和包含源码 revision、SHA-256、版本的 `build.json`。
@@ -72,3 +72,19 @@ go test -tags nogui ./internal/gateway -run 'TestResponsesSocket|TestCodexSocket
 测试使用项目已有隔离入口及本地模拟上游，不调用真实模型或账户。
 完整检查要求见 `docs/code-standards.md`；每次交付应如实记录已跑和未跑项，
 构建成功不等于真实桌面验收。机器日志、凭据、配置、安装备份和产物不入 Git。
+
+
+## v0.1.4777 新增修复
+
+- Codex 压缩：使用目标账户窗口与完整请求的本地估算，在可识别的超长压缩请求发送前优先缩减较老且特别长的工具文本。只缩减重发给模型的旧工具文本，不改原始会话、用户和助手消息、图片与最近 24 条工具结果。不改变普通聊天、凭据或路由账户，也不依赖 Neon 余额。此补丁不实现多轮分段压缩。
+- AGY 周额度：短暂的滚动满额占位不覆盖仍有效的已测周窗口。读到已测新窗口，或原窗口到期时，允许真实换窗。五小时窗不做这项判定。
+- AGY 社区插件超时：单独维护 [AGY CLI 0.1.121 补丁](../build/windows/patches/agy-cli-0.1.121-usage-timeout.patch)。在对应插件目录先运行 `git apply --check <补丁路径>`，再运行 `git apply <补丁路径>`。直查限时仍为 5 秒，总预算提高到 18 秒。补丁不嵌入 Magpie.exe，插件升级后应先检查上游行为。
+
+回归使用本地模拟上游；示例中不含聊天记录。旧会话端到端需要单独验收。
+
+```text
+go test ./internal/gateway -run 'TestCodexNativeCompactRetriesOversizedHistory|TestRoutedCodexCompactRetriesWithoutChangingAccounts|TestCodexCompactPreflight|TestCodexCompactTooLarge' -count=1
+go test ./internal/provider -run 'TestQuotaStale|TestAGYRollingWeek' -count=1
+```
+
+已有传输补丁：保持已中断输入而不回放部分输出；无帧 1011 后同后端、账户、会话和模型短暂优先走 HTTP；同次重试不因冷却到期切回，健康连接正常复用。大请求仍是一个 WebSocket 文本消息，按 16 KiB 分片写入，并行响应 Ping。诊断记录关闭状态以及中断处理阶段耗时，不记录正文或凭据。
